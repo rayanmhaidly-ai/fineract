@@ -73,11 +73,11 @@ public class GroupConfiguration {
     public CenterReadPlatformService centerReadPlatformService(JdbcTemplate jdbcTemplate, PlatformSecurityContext context,
             ClientReadPlatformService clientReadPlatformService, OfficeReadPlatformService officeReadPlatformService,
             StaffReadPlatformService staffReadPlatformService, CodeValueReadPlatformService codeValueReadPlatformService,
-            ConfigurationDomainService configurationDomainService, ColumnValidator columnValidator, PaginationHelper paginationHelper,
+            ConfigurationDomainService configurationDomainService, PaginationHelper paginationHelper,
             DatabaseSpecificSQLGenerator sqlGenerator, PaginationParametersDataValidator paginationParametersDataValidator) {
         return new CenterReadPlatformServiceImpl(jdbcTemplate, context, clientReadPlatformService, officeReadPlatformService,
-                staffReadPlatformService, codeValueReadPlatformService, configurationDomainService, columnValidator, paginationHelper,
-                sqlGenerator, paginationParametersDataValidator);
+                staffReadPlatformService, codeValueReadPlatformService, configurationDomainService, paginationHelper, sqlGenerator,
+                paginationParametersDataValidator);
     }
 
     @Bean
