@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
@@ -34,6 +35,7 @@ import org.apache.fineract.infrastructure.codes.data.CodeValueData;
 import org.apache.fineract.infrastructure.codes.service.CodeValueReadPlatformService;
 import org.apache.fineract.infrastructure.core.data.ApiParameterError;
 import org.apache.fineract.infrastructure.core.data.EnumOptionData;
+import org.apache.fineract.infrastructure.core.data.PaginationParametersDataValidator;
 import org.apache.fineract.infrastructure.core.domain.ExternalId;
 import org.apache.fineract.infrastructure.core.domain.JdbcSupport;
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
@@ -67,6 +69,15 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class ClientReadPlatformServiceImpl implements ClientReadPlatformService {
 
+    private static final Map<String, String> SUPPORTED_ORDER_BY_COLUMNS = Map.ofEntries(Map.entry("id", "c.id"),
+            Map.entry("accountNo", "c.account_no"), Map.entry("externalId", "c.external_id"), Map.entry("statusEnum", "c.status_enum"),
+            Map.entry("officeId", "c.office_id"), Map.entry("officeName", "o.name"), Map.entry("firstname", "c.firstname"),
+            Map.entry("middlename", "c.middlename"), Map.entry("lastname", "c.lastname"), Map.entry("fullname", "c.fullname"),
+            Map.entry("displayName", "c.display_name"), Map.entry("mobileNo", "c.mobile_no"), Map.entry("emailAddress", "c.email_address"),
+            Map.entry("dateOfBirth", "c.date_of_birth"), Map.entry("legalFormEnum", "c.legal_form_enum"),
+            Map.entry("submittedOnDate", "c.submittedon_date"), Map.entry("activationDate", "c.activation_date"),
+            Map.entry("closedOnDate", "c.closedon_date"), Map.entry("staffId", "c.staff_id"), Map.entry("staffName", "s.display_name"));
+
     private final JdbcTemplate jdbcTemplate;
     private final PlatformSecurityContext context;
     private final CodeValueReadPlatformService codeValueReadPlatformService;
@@ -82,6 +93,7 @@ public class ClientReadPlatformServiceImpl implements ClientReadPlatformService 
     private final ClientCollateralManagementRepositoryWrapper clientCollateralManagementRepositoryWrapper;
     private final ClientRepositoryWrapper clientRepositoryWrapper;
     private final ClientMapper clientMapper;
+    private final PaginationParametersDataValidator paginationParametersDataValidator;
 
     @Override
     public Page<ClientData> retrieveAll(final SearchParameters searchParameters) {
@@ -94,6 +106,10 @@ public class ClientReadPlatformServiceImpl implements ClientReadPlatformService 
                     defaultUserMessage, "status", searchParameters.getStatus());
             dataValidationErrors.add(error);
             throw new PlatformApiDataValidationException(dataValidationErrors);
+        }
+        if (searchParameters != null) {
+            this.paginationParametersDataValidator.validateParameterValues(searchParameters.getOrderBy(), searchParameters.getSortOrder(),
+                    SUPPORTED_ORDER_BY_COLUMNS.keySet(), "client");
         }
 
         final String userOfficeHierarchy = this.context.officeHierarchy();
@@ -124,11 +140,9 @@ public class ClientReadPlatformServiceImpl implements ClientReadPlatformService 
             }
 
             if (searchParameters.hasOrderBy()) {
-                sqlBuilder.append(" order by ").append(searchParameters.getOrderBy());
-                this.columnValidator.validateSqlInjection(sqlBuilder.toString(), searchParameters.getOrderBy());
+                sqlBuilder.append(" order by ").append(SUPPORTED_ORDER_BY_COLUMNS.get(searchParameters.getOrderBy()));
                 if (searchParameters.hasSortOrder()) {
-                    sqlBuilder.append(' ').append(searchParameters.getSortOrder());
-                    this.columnValidator.validateSqlInjection(sqlBuilder.toString(), searchParameters.getSortOrder());
+                    sqlBuilder.append(' ').append("DESC".equalsIgnoreCase(searchParameters.getSortOrder()) ? "DESC" : "ASC");
                 }
             }
 
@@ -248,8 +262,8 @@ public class ClientReadPlatformServiceImpl implements ClientReadPlatformService 
         String sql = "select " + this.lookupMapper.schema();
 
         if (StringUtils.isNotBlank(extraCriteria)) {
-            sql += " and (" + extraCriteria + ")";
             this.columnValidator.validateSqlInjection(sql, extraCriteria);
+            sql += " and (" + extraCriteria + ")";
         }
         return this.jdbcTemplate.query(sql, this.lookupMapper); // NOSONAR
     }
