@@ -32,6 +32,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -56,6 +57,7 @@ import org.apache.fineract.infrastructure.dataqueries.exception.ReportNotFoundEx
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
 import org.apache.fineract.infrastructure.security.service.SqlInjectionPreventerService;
 import org.apache.fineract.infrastructure.security.utils.LogParameterEscapeUtil;
+import org.apache.fineract.infrastructure.security.utils.ReportSqlPlaceholderResolver;
 import org.apache.fineract.useradministration.domain.AppUser;
 import org.openpdf.text.Document;
 import org.openpdf.text.PageSize;
@@ -133,22 +135,27 @@ public class ReadReportingServiceImpl implements ReadReportingService {
 
         String sql = getSql(name, type);
 
-        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
-            sql = this.genericDataService.replace(sql, entry.getKey(), entry.getValue());
-        }
-
-        final AppUser currentUser = this.context.authenticatedUser();
-        // Allows sql query to restrict data by office hierarchy if required
-        sql = this.genericDataService.replace(sql, "${currentUserHierarchy}", currentUser.getOffice().getHierarchy());
-        // Allows sql query to restrict data by current user Id if required
-        // (typically used to return report lists containing only reports
-        // permitted to be run by the user
-        sql = this.genericDataService.replace(sql, "${currentUserId}", currentUser.getId().toString());
-        sql = this.genericDataService.replace(sql, "${isSelfServiceUser}", Boolean.toString(isSelfServiceUserReport));
-        sql = this.genericDataService.replace(sql, "${currentDate}", sqlGenerator.currentBusinessDate());
         sql = StringUtils.replaceIgnoreCase(sql, "NOW()", sqlGenerator.currentTenantDateTime());
         sql = StringUtils.replaceIgnoreCase(sql, "curdate()", sqlGenerator.currentBusinessDate());
         sql = StringUtils.replaceIgnoreCase(sql, "CURRENT_DATE", sqlGenerator.currentBusinessDate());
+
+        final AppUser currentUser = this.context.authenticatedUser();
+        final Map<String, String> systemParams = new HashMap<>();
+        // Allows sql query to restrict data by office hierarchy if required
+        systemParams.put("currentUserHierarchy", currentUser.getOffice().getHierarchy());
+        // Allows sql query to restrict data by current user Id if required
+        // (typically used to return report lists containing only reports
+        // permitted to be run by the user
+        systemParams.put("currentUserId", currentUser.getId().toString());
+        systemParams.put("isSelfServiceUser", Boolean.toString(isSelfServiceUserReport));
+        systemParams.put("currentDate", sqlGenerator.currentBusinessDate());
+
+        final Map<String, String> userParams = new HashMap<>();
+        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+            userParams.put(StringUtils.removeEnd(StringUtils.removeStart(entry.getKey(), "${"), "}"), entry.getValue());
+        }
+
+        sql = ReportSqlPlaceholderResolver.resolve(sql, userParams, systemParams);
         sql = this.genericDataService.wrapSQL(sql);
 
         return sql;
