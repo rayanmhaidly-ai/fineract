@@ -24,7 +24,10 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.apache.fineract.infrastructure.core.data.PaginationParametersDataValidator;
 import org.apache.fineract.infrastructure.core.domain.ExternalId;
 import org.apache.fineract.infrastructure.core.domain.JdbcSupport;
 import org.apache.fineract.infrastructure.core.service.DateUtils;
@@ -32,7 +35,6 @@ import org.apache.fineract.infrastructure.core.service.ExternalIdFactory;
 import org.apache.fineract.infrastructure.core.service.SearchParameters;
 import org.apache.fineract.infrastructure.core.service.database.DatabaseSpecificSQLGenerator;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
-import org.apache.fineract.infrastructure.security.utils.ColumnValidator;
 import org.apache.fineract.organisation.monetary.data.CurrencyData;
 import org.apache.fineract.organisation.monetary.service.CurrencyReadPlatformService;
 import org.apache.fineract.organisation.office.data.OfficeData;
@@ -53,10 +55,17 @@ public class OfficeReadPlatformServiceImpl implements OfficeReadPlatformService 
     private final DatabaseSpecificSQLGenerator sqlGenerator;
     private final PlatformSecurityContext context;
     private final CurrencyReadPlatformService currencyReadPlatformService;
-    private final ColumnValidator columnValidator;
+    private final PaginationParametersDataValidator paginationParametersDataValidator;
 
     private final OfficeRepository officeRepository;
     private final OfficeDataMapper officeDataMapper;
+    private static final Map<String, String> SUPPORTED_ORDER_BY_COLUMNS = Map.ofEntries(Map.entry("id", "o.id"),
+            Map.entry("name", "o.name"), Map.entry("externalId", "o.external_id"), Map.entry("openingDate", "o.opening_date"),
+            Map.entry("hierarchy", "o.hierarchy"), Map.entry("parentId", "parent.id"), Map.entry("parentName", "parent.name"),
+            Map.entry("o.id", "o.id"), Map.entry("o.name", "o.name"), Map.entry("o.external_id", "o.external_id"),
+            Map.entry("o.opening_date", "o.opening_date"), Map.entry("o.hierarchy", "o.hierarchy"),
+            Map.entry("o.parent_id", "o.parent_id"));
+    private static final Set<String> SUPPORTED_ORDER_BY_VALUES = SUPPORTED_ORDER_BY_COLUMNS.keySet();
     private static final String nameDecoratedBaseOnHierarchy = "concat(substring('........................................', 1, ((LENGTH(o.hierarchy) - LENGTH(REPLACE(o.hierarchy, '.', '')) - 1) * 4)), o.name)";
 
     private static final class OfficeMapper implements RowMapper<OfficeData> {
@@ -159,12 +168,11 @@ public class OfficeReadPlatformServiceImpl implements OfficeReadPlatformService 
         sqlBuilder.append(rm.officeSchema());
         sqlBuilder.append(" where o.hierarchy like ? ");
         if (searchParameters != null) {
+            this.paginationParametersDataValidator.validateParameterValues(searchParameters, SUPPORTED_ORDER_BY_VALUES, "offices");
             if (searchParameters.hasOrderBy()) {
-                this.columnValidator.validateSqlInjection(sqlBuilder.toString(), searchParameters.getOrderBy());
-                sqlBuilder.append("order by ").append(searchParameters.getOrderBy());
+                sqlBuilder.append("order by ").append(SUPPORTED_ORDER_BY_COLUMNS.get(searchParameters.getOrderBy()));
                 if (searchParameters.hasSortOrder()) {
-                    this.columnValidator.validateSqlInjection(sqlBuilder.toString(), searchParameters.getSortOrder());
-                    sqlBuilder.append(' ').append(searchParameters.getSortOrder());
+                    sqlBuilder.append(' ').append(searchParameters.getSortOrder().toUpperCase());
                 }
             } else {
                 sqlBuilder.append("order by o.hierarchy");

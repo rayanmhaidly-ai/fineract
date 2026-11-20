@@ -23,7 +23,9 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
+import org.apache.fineract.infrastructure.core.service.SearchParameters;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -33,22 +35,31 @@ public class PaginationParametersDataValidator {
 
     public void validateParameterValues(PaginationParameters parameters, final Set<String> supportedOrdeByValues,
             final String resourceName) {
+        validateParameterValues(parameters.getOrderBy(), parameters.getSortOrder(), supportedOrdeByValues, resourceName);
+    }
+
+    public void validateParameterValues(SearchParameters parameters, final Set<String> supportedOrdeByValues, final String resourceName) {
+        validateParameterValues(parameters.getOrderBy(), parameters.getSortOrder(), supportedOrdeByValues, resourceName);
+    }
+
+    private void validateParameterValues(final String orderBy, final String sortOrder, final Set<String> supportedOrdeByValues,
+            final String resourceName) {
         final List<ApiParameterError> dataValidationErrors = new ArrayList<>();
-        if (parameters.hasOrderBy() && !supportedOrdeByValues.contains(parameters.getOrderBy())) {
-            final String defaultUserMessage = "The orderBy value '" + parameters.getOrderBy()
-                    + "' is not supported. The supported orderBy values are " + supportedOrdeByValues;
+        if (StringUtils.isNotBlank(orderBy) && !supportedOrdeByValues.contains(orderBy)) {
+            final String defaultUserMessage = "The orderBy value '" + orderBy + "' is not supported. The supported orderBy values are "
+                    + supportedOrdeByValues;
             final ApiParameterError error = ApiParameterError.parameterError(
-                    "validation.msg." + resourceName + ".orderBy.value.is.not.supported", defaultUserMessage, "orderBy",
-                    parameters.getOrderBy(), supportedOrdeByValues.toString());
+                    "validation.msg." + resourceName + ".orderBy.value.is.not.supported", defaultUserMessage, "orderBy", orderBy,
+                    supportedOrdeByValues.toString());
             dataValidationErrors.add(error);
         }
 
-        if (parameters.hasSortOrder() && !sortOrderValues.contains(parameters.getSortOrder().toUpperCase())) {
-            final String defaultUserMessage = "The sortOrder value '" + parameters.getSortOrder()
+        if (StringUtils.isNotBlank(sortOrder) && !sortOrderValues.contains(sortOrder.toUpperCase())) {
+            final String defaultUserMessage = "The sortOrder value '" + sortOrder
                     + "' is not supported. The supported sortOrder values are " + sortOrderValues;
             final ApiParameterError error = ApiParameterError.parameterError(
-                    "validation.msg." + resourceName + ".sortOrder.value.is.not.supported", defaultUserMessage, "sortOrder",
-                    parameters.getSortOrder(), sortOrderValues.toString());
+                    "validation.msg." + resourceName + ".sortOrder.value.is.not.supported", defaultUserMessage, "sortOrder", sortOrder,
+                    sortOrderValues.toString());
             dataValidationErrors.add(error);
         }
         throwExceptionIfValidationWarningsExist(dataValidationErrors);
