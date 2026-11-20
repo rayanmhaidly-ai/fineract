@@ -26,8 +26,9 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.apache.fineract.infrastructure.codes.data.CodeValueData;
@@ -46,7 +47,6 @@ import org.apache.fineract.infrastructure.core.service.PaginationHelper;
 import org.apache.fineract.infrastructure.core.service.SearchParameters;
 import org.apache.fineract.infrastructure.core.service.database.DatabaseSpecificSQLGenerator;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
-import org.apache.fineract.infrastructure.security.utils.ColumnValidator;
 import org.apache.fineract.infrastructure.security.utils.SQLBuilder;
 import org.apache.fineract.organisation.office.data.OfficeData;
 import org.apache.fineract.organisation.office.service.OfficeReadPlatformService;
@@ -82,7 +82,6 @@ public class CenterReadPlatformServiceImpl implements CenterReadPlatformService 
     private final StaffReadPlatformService staffReadPlatformService;
     private final CodeValueReadPlatformService codeValueReadPlatformService;
     private final ConfigurationDomainService configurationDomainService;
-    private final ColumnValidator columnValidator;
 
     // data mappers
     private final CenterDataMapper centerMapper = new CenterDataMapper();
@@ -91,7 +90,9 @@ public class CenterReadPlatformServiceImpl implements CenterReadPlatformService 
     private final PaginationHelper paginationHelper;
     private final DatabaseSpecificSQLGenerator sqlGenerator;
     private final PaginationParametersDataValidator paginationParametersDataValidator;
-    private static final Set<String> SUPPORTED_ORDER_BY_VALUES = new HashSet<>(Arrays.asList("id", "name", "officeId", "officeName"));
+    private static final Map<String, String> ORDER_BY_COLUMNS = Map.of("id", "g.id", "name", "g.display_name", "officeId", "g.office_id",
+            "officeName", "o.name");
+    private static final Set<String> SUPPORTED_ORDER_BY_VALUES = ORDER_BY_COLUMNS.keySet();
 
     // 'g.' preffix because of ERROR 1052 (23000): Column 'column_name' in where
     // clause is ambiguous
@@ -303,10 +304,22 @@ public class CenterReadPlatformServiceImpl implements CenterReadPlatformService 
         }
     }
 
+    private static String buildOrderBy(final SearchParameters searchParameters) {
+        if (!searchParameters.hasOrderBy()) {
+            return "";
+        }
+        final StringBuilder orderBy = new StringBuilder(" order by ").append(ORDER_BY_COLUMNS.get(searchParameters.getOrderBy()));
+        if (searchParameters.hasSortOrder()) {
+            orderBy.append(' ').append(searchParameters.getSortOrder().toUpperCase(Locale.ROOT));
+        }
+        return orderBy.toString();
+    }
+
     @Override
     public Page<CenterData> retrievePagedAll(final SearchParameters searchParameters, final PaginationParameters parameters) {
 
         this.paginationParametersDataValidator.validateParameterValues(parameters, SUPPORTED_ORDER_BY_VALUES, "audits");
+        this.paginationParametersDataValidator.validateParameterValues(searchParameters, SUPPORTED_ORDER_BY_VALUES, "audits");
         final AppUser currentUser = this.context.authenticatedUser();
         final String hierarchy = currentUser.getOffice().getHierarchy();
         final String hierarchySearchString = hierarchy + "%";
@@ -317,12 +330,7 @@ public class CenterReadPlatformServiceImpl implements CenterReadPlatformService 
         final SQLBuilder extraCriteria = getCenterExtraCriteria(this.centerMapper.schema(), searchParameters);
         extraCriteria.addNonNullCriteria("o.hierarchy like ", hierarchySearchString);
         sqlBuilder.append(' ').append(extraCriteria.getSQLTemplate());
-        if (searchParameters.hasOrderBy()) {
-            sqlBuilder.append(" order by ").append(searchParameters.getOrderBy()).append(' ').append(searchParameters.getSortOrder());
-            this.columnValidator.validateSqlInjection(sqlBuilder.toString(), searchParameters.getOrderBy(),
-                    searchParameters.getSortOrder());
-
-        }
+        sqlBuilder.append(buildOrderBy(searchParameters));
 
         if (searchParameters.hasLimit()) {
             sqlBuilder.append(" ");
@@ -341,6 +349,9 @@ public class CenterReadPlatformServiceImpl implements CenterReadPlatformService 
         if (parameters != null) {
             this.paginationParametersDataValidator.validateParameterValues(parameters, SUPPORTED_ORDER_BY_VALUES, "audits");
         }
+        if (searchParameters != null) {
+            this.paginationParametersDataValidator.validateParameterValues(searchParameters, SUPPORTED_ORDER_BY_VALUES, "audits");
+        }
         final AppUser currentUser = this.context.authenticatedUser();
         final String hierarchy = currentUser.getOffice().getHierarchy();
         final String hierarchySearchString = hierarchy + "%";
@@ -352,11 +363,7 @@ public class CenterReadPlatformServiceImpl implements CenterReadPlatformService 
         extraCriteria.addNonNullCriteria("o.hierarchy like ", hierarchySearchString);
         sqlBuilder.append(' ').append(extraCriteria.getSQLTemplate());
         if (searchParameters != null) {
-            if (searchParameters.hasOrderBy()) {
-                sqlBuilder.append(" order by ").append(searchParameters.getOrderBy()).append(' ').append(searchParameters.getSortOrder());
-                this.columnValidator.validateSqlInjection(sqlBuilder.toString(), searchParameters.getOrderBy(),
-                        searchParameters.getSortOrder());
-            }
+            sqlBuilder.append(buildOrderBy(searchParameters));
 
             if (searchParameters.hasLimit()) {
                 sqlBuilder.append(" ");

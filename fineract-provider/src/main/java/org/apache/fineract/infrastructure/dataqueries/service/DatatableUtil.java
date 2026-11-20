@@ -23,12 +23,20 @@ import static org.apache.fineract.infrastructure.dataqueries.api.DataTableApiCon
 import static org.apache.fineract.infrastructure.dataqueries.api.DataTableApiConstant.TABLE_FIELD_ID;
 import static org.apache.fineract.infrastructure.dataqueries.api.DataTableApiConstant.TABLE_REGISTERED_TABLE;
 
+import com.google.common.base.Splitter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.fineract.infrastructure.core.data.ApiParameterError;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResultBuilder;
+import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
 import org.apache.fineract.infrastructure.core.exception.PlatformDataIntegrityException;
 import org.apache.fineract.infrastructure.core.service.database.DatabaseSpecificSQLGenerator;
 import org.apache.fineract.infrastructure.dataqueries.data.EntityTables;
@@ -39,9 +47,9 @@ import org.apache.fineract.infrastructure.dataqueries.exception.DatatableNotFoun
 import org.apache.fineract.infrastructure.dataqueries.exception.DatatableSystemErrorException;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
 import org.apache.fineract.infrastructure.security.service.SqlValidator;
-import org.apache.fineract.infrastructure.security.utils.ColumnValidator;
 import org.apache.fineract.portfolio.search.service.SearchUtil;
 import org.apache.fineract.useradministration.domain.AppUser;
+import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
 import org.springframework.lang.NonNull;
@@ -53,6 +61,9 @@ import org.springframework.stereotype.Service;
 public class DatatableUtil {
 
     private static final String APPLICATION_TABLE_NAME = "application_table_name";
+    private static final String API_PARAM_ORDER = "order";
+    private static final Pattern ORDER_PART_PATTERN = Pattern.compile("(?:`([^`]+)`|\"([^\"]+)\"|([A-Za-z0-9_ ]+?))(?:\\s+(asc|desc))?",
+            Pattern.CASE_INSENSITIVE);
 
     private final SearchUtil searchUtil;
     private final JdbcTemplate jdbcTemplate;
@@ -60,7 +71,6 @@ public class DatatableUtil {
     private final PlatformSecurityContext context;
     private final GenericDataService genericDataService;
     private final DatabaseSpecificSQLGenerator sqlGenerator;
-    private final ColumnValidator columnValidator;
 
     public boolean isMultirowDatatable(final List<ResultsetColumnHeaderData> columnHeaders) {
         return searchUtil.findFiltered(columnHeaders, e -> e.isNamed(TABLE_FIELD_ID)) != null;
@@ -210,12 +220,34 @@ public class DatatableUtil {
             sql = sql + " and " + TABLE_FIELD_ID + " = " + id;
         }
         if (StringUtils.isNotBlank(order)) {
-            columnValidator.validateSqlInjection(sql, order);
-            sql = sql + " order by " + order;
+            sql = sql + " " + buildOrderBy(order, columnHeaders);
         }
 
         final List<ResultsetRowData> result = genericDataService.fillResultsetRowData(sql, columnHeaders);
         return new GenericResultsetData(columnHeaders, result);
+    }
+
+    /**
+     * Parses a comma separated {@code order} value ({@code column [asc|desc]}, column optionally quoted with backticks
+     * or double quotes) into an ORDER BY clause, accepting only columns of the datatable and the asc/desc directions.
+     */
+    private String buildOrderBy(final String order, final List<ResultsetColumnHeaderData> columnHeaders) {
+        final Map<String, ResultsetColumnHeaderData> headersByName = searchUtil.mapHeadersToName(columnHeaders);
+        final List<Sort.Order> orders = new ArrayList<>();
+        for (String orderPart : Splitter.on(',').trimResults().split(order)) {
+            final Matcher matcher = ORDER_PART_PATTERN.matcher(orderPart);
+            if (!matcher.matches()) {
+                throw new PlatformApiDataValidationException(
+                        List.of(ApiParameterError.parameterError("validation.msg.datatable.order.value.is.not.supported",
+                                "The order value '" + order + "' is not supported. Expected: column [asc|desc][, column [asc|desc]...]",
+                                API_PARAM_ORDER, order)));
+            }
+            final String column = ObjectUtils.firstNonNull(matcher.group(1), matcher.group(2), matcher.group(3));
+            final String direction = matcher.group(4);
+            orders.add(new Sort.Order(direction == null ? Sort.Direction.ASC : Sort.Direction.fromString(direction),
+                    searchUtil.validateToJdbcColumnName(column, headersByName, false)));
+        }
+        return sqlGenerator.buildOrderBy(orders, null, false);
     }
 
     private boolean isRegisteredDataTable(final String datatable) {
