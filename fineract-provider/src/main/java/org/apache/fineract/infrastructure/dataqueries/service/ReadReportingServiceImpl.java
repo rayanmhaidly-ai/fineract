@@ -32,9 +32,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.csv.CSVFormat;
@@ -44,6 +47,7 @@ import org.apache.fineract.infrastructure.core.config.FineractProperties;
 import org.apache.fineract.infrastructure.core.domain.JdbcSupport;
 import org.apache.fineract.infrastructure.core.exception.ErrorHandler;
 import org.apache.fineract.infrastructure.core.service.database.DatabaseSpecificSQLGenerator;
+import org.apache.fineract.infrastructure.core.service.database.DatabaseTypeResolver;
 import org.apache.fineract.infrastructure.core.service.database.JdbcJavaType;
 import org.apache.fineract.infrastructure.dataqueries.data.GenericResultsetData;
 import org.apache.fineract.infrastructure.dataqueries.data.ReportData;
@@ -56,6 +60,7 @@ import org.apache.fineract.infrastructure.dataqueries.exception.ReportNotFoundEx
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
 import org.apache.fineract.infrastructure.security.service.SqlInjectionPreventerService;
 import org.apache.fineract.infrastructure.security.utils.LogParameterEscapeUtil;
+import org.apache.fineract.infrastructure.security.utils.ReportSqlPlaceholderResolver;
 import org.apache.fineract.useradministration.domain.AppUser;
 import org.openpdf.text.Document;
 import org.openpdf.text.PageSize;
@@ -71,11 +76,14 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class ReadReportingServiceImpl implements ReadReportingService {
 
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{[^{}]*}");
+
     private final JdbcTemplate jdbcTemplate;
     private final PlatformSecurityContext context;
     private final GenericDataService genericDataService;
     private final SqlInjectionPreventerService sqlInjectionPreventerService;
     private final DatabaseSpecificSQLGenerator sqlGenerator;
+    private final DatabaseTypeResolver databaseTypeResolver;
     private final FineractProperties fineractProperties;
 
     @Override
@@ -133,25 +141,45 @@ public class ReadReportingServiceImpl implements ReadReportingService {
 
         String sql = getSql(name, type);
 
-        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
-            sql = this.genericDataService.replace(sql, entry.getKey(), entry.getValue());
-        }
+        sql = replaceDateFunctionsOutsidePlaceholders(sql);
 
         final AppUser currentUser = this.context.authenticatedUser();
+        final Map<String, String> systemParams = new HashMap<>();
         // Allows sql query to restrict data by office hierarchy if required
-        sql = this.genericDataService.replace(sql, "${currentUserHierarchy}", currentUser.getOffice().getHierarchy());
+        systemParams.put("currentUserHierarchy", currentUser.getOffice().getHierarchy());
         // Allows sql query to restrict data by current user Id if required
         // (typically used to return report lists containing only reports
         // permitted to be run by the user
-        sql = this.genericDataService.replace(sql, "${currentUserId}", currentUser.getId().toString());
-        sql = this.genericDataService.replace(sql, "${isSelfServiceUser}", Boolean.toString(isSelfServiceUserReport));
-        sql = this.genericDataService.replace(sql, "${currentDate}", sqlGenerator.currentBusinessDate());
-        sql = StringUtils.replaceIgnoreCase(sql, "NOW()", sqlGenerator.currentTenantDateTime());
-        sql = StringUtils.replaceIgnoreCase(sql, "curdate()", sqlGenerator.currentBusinessDate());
-        sql = StringUtils.replaceIgnoreCase(sql, "CURRENT_DATE", sqlGenerator.currentBusinessDate());
+        systemParams.put("currentUserId", currentUser.getId().toString());
+        systemParams.put("isSelfServiceUser", Boolean.toString(isSelfServiceUserReport));
+        systemParams.put("currentDate", sqlGenerator.currentBusinessDate());
+
+        final Map<String, String> userParams = new HashMap<>();
+        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+            userParams.put(StringUtils.removeEnd(StringUtils.removeStart(entry.getKey(), "${"), "}"), entry.getValue());
+        }
+
+        sql = ReportSqlPlaceholderResolver.resolve(sql, userParams, systemParams, databaseTypeResolver.isMySQL());
         sql = this.genericDataService.wrapSQL(sql);
 
         return sql;
+    }
+
+    private String replaceDateFunctionsOutsidePlaceholders(final String sql) {
+        final StringBuilder result = new StringBuilder(sql.length());
+        final Matcher placeholder = PLACEHOLDER.matcher(sql);
+        int last = 0;
+        while (placeholder.find()) {
+            result.append(replaceDateFunctions(sql.substring(last, placeholder.start()))).append(placeholder.group());
+            last = placeholder.end();
+        }
+        return result.append(replaceDateFunctions(sql.substring(last))).toString();
+    }
+
+    private String replaceDateFunctions(String sql) {
+        sql = StringUtils.replaceIgnoreCase(sql, "NOW()", sqlGenerator.currentTenantDateTime());
+        sql = StringUtils.replaceIgnoreCase(sql, "curdate()", sqlGenerator.currentBusinessDate());
+        return StringUtils.replaceIgnoreCase(sql, "CURRENT_DATE", sqlGenerator.currentBusinessDate());
     }
 
     private String getSql(final String name, final String type) {
