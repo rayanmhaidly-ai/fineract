@@ -38,7 +38,7 @@ class ReportSqlPlaceholderResolverTest {
                 + " and c.display_name like '${name}%' and c.activation_date <= '${endDate}' and c.id in (${ids})";
 
         String resolved = ReportSqlPlaceholderResolver.resolve(sql,
-                Map.of("officeId", "-1", "name", "Jane O Doe", "endDate", "2023-12-31", "ids", "1, 2,3"), SYSTEM);
+                Map.of("officeId", "-1", "name", "Jane O Doe", "endDate", "2023-12-31", "ids", "1, 2,3"), SYSTEM, false);
 
         assertThat(resolved).isEqualTo("select * from m_client c join m_office o on o.id = c.office_id"
                 + " where o.hierarchy like concat('.1.', '%') and o.id = -1"
@@ -50,7 +50,7 @@ class ReportSqlPlaceholderResolverTest {
         String sql = "select * from stretchy_report sr where sr.report_name in(${reportListing}) and sr.x = DATE ${startDate}";
 
         String resolved = ReportSqlPlaceholderResolver.resolve(sql,
-                Map.of("reportListing", "'Client Listing','Loan Listing'", "startDate", "'2023-01-01'"), SYSTEM);
+                Map.of("reportListing", "'Client Listing','Loan Listing'", "startDate", "'2023-01-01'"), SYSTEM, false);
 
         assertThat(resolved).isEqualTo(
                 "select * from stretchy_report sr where sr.report_name in('Client Listing','Loan Listing') and sr.x = DATE '2023-01-01'");
@@ -62,7 +62,7 @@ class ReportSqlPlaceholderResolverTest {
     void rejectsMaliciousValueOutsideQuotes(String value) {
         String sql = "select * from m_office o where o.id = ${officeId}";
 
-        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("officeId", value), SYSTEM))
+        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("officeId", value), SYSTEM, false))
                 .isInstanceOf(SqlValidationException.class).hasMessageContaining("officeId");
     }
 
@@ -72,7 +72,7 @@ class ReportSqlPlaceholderResolverTest {
     void rejectsMaliciousValueInsideQuotes(String value) {
         String sql = "select * from m_loan l where l.disbursedon_date >= '${startDate}' and l.x = \"${startDate}\"";
 
-        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("startDate", value), SYSTEM))
+        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("startDate", value), SYSTEM, false))
                 .isInstanceOf(SqlValidationException.class).hasMessageContaining("startDate");
     }
 
@@ -80,7 +80,7 @@ class ReportSqlPlaceholderResolverTest {
     void rejectsOverrideOfSystemPlaceholder() {
         String sql = "select * from m_office o where o.hierarchy like concat('${currentUserHierarchy}', '%')";
 
-        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("currentUserHierarchy", "."), SYSTEM))
+        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("currentUserHierarchy", "."), SYSTEM, false))
                 .isInstanceOf(SqlValidationException.class).hasMessageContaining("reserved");
     }
 
@@ -88,7 +88,7 @@ class ReportSqlPlaceholderResolverTest {
     void doesNotReScanSubstitutedValues() {
         String sql = "select '${a}' as a, ${b} as b";
 
-        String resolved = ReportSqlPlaceholderResolver.resolve(sql, Map.of("a", "${b}", "b", "1"), SYSTEM);
+        String resolved = ReportSqlPlaceholderResolver.resolve(sql, Map.of("a", "${b}", "b", "1"), SYSTEM, false);
 
         assertThat(resolved).isEqualTo("select '${b}' as a, 1 as b");
     }
@@ -97,7 +97,7 @@ class ReportSqlPlaceholderResolverTest {
     void tracksQuotesAndCommentsAroundPlaceholders() {
         String sql = "select 'it''s' as t, ${id} as i /* don't ${id} */ -- client's ${id}\n, '${name}' as n";
 
-        String resolved = ReportSqlPlaceholderResolver.resolve(sql, Map.of("id", "5", "name", "abc"), SYSTEM);
+        String resolved = ReportSqlPlaceholderResolver.resolve(sql, Map.of("id", "5", "name", "abc"), SYSTEM, false);
 
         assertThat(resolved).isEqualTo("select 'it''s' as t, 5 as i /* don't ${id} */ -- client's ${id}\n, 'abc' as n");
     }
@@ -106,6 +106,47 @@ class ReportSqlPlaceholderResolverTest {
     void leavesUnknownPlaceholdersUntouched() {
         String sql = "select ${unknown} from t where id = ${id}";
 
-        assertThat(ReportSqlPlaceholderResolver.resolve(sql, Map.of("id", "1"), SYSTEM)).isEqualTo("select ${unknown} from t where id = 1");
+        assertThat(ReportSqlPlaceholderResolver.resolve(sql, Map.of("id", "1"), SYSTEM, false))
+                .isEqualTo("select ${unknown} from t where id = 1");
+    }
+
+    @Test
+    void resolvesPlaceholderNamesWithHyphens() {
+        String sql = "select * from m_office o where o.id = ${office-id} and o.name = '${office.name}'";
+
+        String resolved = ReportSqlPlaceholderResolver.resolve(sql, Map.of("office-id", "1", "office.name", "Head Office"), SYSTEM, false);
+
+        assertThat(resolved).isEqualTo("select * from m_office o where o.id = 1 and o.name = 'Head Office'");
+        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("office-id", "1 or 1=1"), SYSTEM, false))
+                .isInstanceOf(SqlValidationException.class).hasMessageContaining("office-id");
+    }
+
+    @Test
+    void honoursBackslashEscapesWhenEnabled() {
+        String sql = "select 'Today\\'s cutoff' as label, '${endDate}' as cutoff, ${id} as i";
+
+        String resolved = ReportSqlPlaceholderResolver.resolve(sql, Map.of("endDate", "2026-11-21", "id", "5"), SYSTEM, true);
+
+        assertThat(resolved).isEqualTo("select 'Today\\'s cutoff' as label, '2026-11-21' as cutoff, 5 as i");
+        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("endDate", "2026-11-21", "id", "5 or 1=1"), SYSTEM, true))
+                .isInstanceOf(SqlValidationException.class).hasMessageContaining("id");
+    }
+
+    @Test
+    void treatsBackslashAsLiteralWithoutBackslashEscapes() {
+        String sql = "select 'C:\\' as path, ${id} as i";
+
+        assertThatThrownBy(() -> ReportSqlPlaceholderResolver.resolve(sql, Map.of("id", "5 or 1=1"), SYSTEM, false))
+                .isInstanceOf(SqlValidationException.class).hasMessageContaining("id");
+        assertThat(ReportSqlPlaceholderResolver.resolve(sql, Map.of("id", "5"), SYSTEM, false)).isEqualTo("select 'C:\\' as path, 5 as i");
+    }
+
+    @Test
+    void honoursPostgresEscapeStrings() {
+        String sql = "select E'Today\\'s cutoff' as label, '${endDate}' as cutoff";
+
+        String resolved = ReportSqlPlaceholderResolver.resolve(sql, Map.of("endDate", "2026-11-21"), SYSTEM, false);
+
+        assertThat(resolved).isEqualTo("select E'Today\\'s cutoff' as label, '2026-11-21' as cutoff");
     }
 }

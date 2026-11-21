@@ -37,17 +37,21 @@ import org.apache.fineract.infrastructure.security.exception.SqlValidationExcept
  * </ul>
  * Substitution is done in a single pass over the template, so substituted values are never re-scanned for placeholders.
  * Trusted system values (current user hierarchy etc.) cannot be overridden by user parameters. Placeholders inside SQL
- * comments and placeholders without a value are left untouched.
+ * comments and placeholders without a value are left untouched. Placeholder names are matched exactly against the
+ * supplied keys, so any name that does not contain braces is supported.
+ *
+ * <p>
+ * Backslash escapes inside quoted literals (<code>'it\'s'</code>) are only honoured when <code>backslashEscapes</code>
+ * is set (MySQL / MariaDB default) or inside PostgreSQL <code>E'...'</code> escape strings.
  */
 public final class ReportSqlPlaceholderResolver {
 
-    private static final Pattern PLACEHOLDER_NAME = Pattern.compile("[A-Za-z0-9_]+");
     private static final String LITERAL = "(?:-?\\d+(?:\\.\\d+)?|'[^'\"`\\\\]*')";
     private static final Pattern UNQUOTED_VALUE = Pattern.compile("\\s*" + LITERAL + "(?:\\s*,\\s*" + LITERAL + ")*\\s*");
     private static final Pattern QUOTED_FORBIDDEN = Pattern.compile("['\"`\\\\\\x00]");
 
     private enum Context {
-        NONE, SINGLE_QUOTE, DOUBLE_QUOTE, BACKTICK, LINE_COMMENT, BLOCK_COMMENT
+        NONE, SINGLE_QUOTE, ESCAPE_SINGLE_QUOTE, DOUBLE_QUOTE, BACKTICK, LINE_COMMENT, BLOCK_COMMENT
     }
 
     private ReportSqlPlaceholderResolver() {}
@@ -59,11 +63,14 @@ public final class ReportSqlPlaceholderResolver {
      *            untrusted values supplied by the caller, keyed by placeholder name (without <code>${}</code>)
      * @param systemParams
      *            trusted values computed by the platform, keyed by placeholder name (without <code>${}</code>)
+     * @param backslashEscapes
+     *            whether the target database treats a backslash inside quoted literals as an escape character
      * @return the SQL with all known placeholders resolved
      * @throws SqlValidationException
      *             if a user value would change the structure of the SQL or tries to override a system value
      */
-    public static String resolve(final String sql, final Map<String, String> userParams, final Map<String, String> systemParams) {
+    public static String resolve(final String sql, final Map<String, String> userParams, final Map<String, String> systemParams,
+            final boolean backslashEscapes) {
         for (String name : userParams.keySet()) {
             if (systemParams.containsKey(name)) {
                 throw new SqlValidationException(String.format("report parameter '%s' is reserved", name));
@@ -80,7 +87,7 @@ public final class ReportSqlPlaceholderResolver {
             if (c == '$' && next == '{' && context != Context.LINE_COMMENT && context != Context.BLOCK_COMMENT) {
                 final int end = sql.indexOf('}', i + 2);
                 final String name = end > 0 ? sql.substring(i + 2, end) : null;
-                if (name != null && PLACEHOLDER_NAME.matcher(name).matches()) {
+                if (name != null && name.indexOf('{') < 0) {
                     if (systemParams.containsKey(name)) {
                         result.append(systemParams.get(name));
                         i = end + 1;
@@ -100,7 +107,7 @@ public final class ReportSqlPlaceholderResolver {
             switch (context) {
                 case NONE -> {
                     if (c == '\'') {
-                        context = Context.SINGLE_QUOTE;
+                        context = isEscapeStringPrefix(sql, i) ? Context.ESCAPE_SINGLE_QUOTE : Context.SINGLE_QUOTE;
                     } else if (c == '"') {
                         context = Context.DOUBLE_QUOTE;
                     } else if (c == '`') {
@@ -113,8 +120,14 @@ public final class ReportSqlPlaceholderResolver {
                         consumed = 2;
                     }
                 }
-                case SINGLE_QUOTE -> context = c == '\'' ? Context.NONE : context;
-                case DOUBLE_QUOTE -> context = c == '"' ? Context.NONE : context;
+                case SINGLE_QUOTE, ESCAPE_SINGLE_QUOTE, DOUBLE_QUOTE -> {
+                    final boolean escapes = backslashEscapes || context == Context.ESCAPE_SINGLE_QUOTE;
+                    if (escapes && c == '\\' && next != 0 && next != '$') {
+                        consumed = 2;
+                    } else if (c == (context == Context.DOUBLE_QUOTE ? '"' : '\'')) {
+                        context = Context.NONE;
+                    }
+                }
                 case BACKTICK -> context = c == '`' ? Context.NONE : context;
                 case LINE_COMMENT -> context = c == '\n' || c == '\r' ? Context.NONE : context;
                 case BLOCK_COMMENT -> {
@@ -128,6 +141,17 @@ public final class ReportSqlPlaceholderResolver {
             i += consumed;
         }
         return result.toString();
+    }
+
+    private static boolean isEscapeStringPrefix(final String sql, final int quoteIndex) {
+        if (quoteIndex == 0 || Character.toUpperCase(sql.charAt(quoteIndex - 1)) != 'E') {
+            return false;
+        }
+        return quoteIndex == 1 || !isIdentifierPart(sql.charAt(quoteIndex - 2));
+    }
+
+    private static boolean isIdentifierPart(final char c) {
+        return Character.isLetterOrDigit(c) || c == '_' || c == '$';
     }
 
     private static void validate(final String name, final String value, final Context context) {

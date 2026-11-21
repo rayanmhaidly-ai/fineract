@@ -31,6 +31,7 @@ import static org.mockito.Mockito.when;
 import java.util.Map;
 import org.apache.fineract.infrastructure.core.config.FineractProperties;
 import org.apache.fineract.infrastructure.core.service.database.DatabaseSpecificSQLGenerator;
+import org.apache.fineract.infrastructure.core.service.database.DatabaseTypeResolver;
 import org.apache.fineract.infrastructure.dataqueries.data.GenericResultsetData;
 import org.apache.fineract.infrastructure.security.exception.SqlValidationException;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
@@ -66,7 +67,11 @@ class ReadReportingServiceImplTest {
     @Mock
     private DatabaseSpecificSQLGenerator sqlGenerator;
     @Mock
+    private DatabaseTypeResolver databaseTypeResolver;
+    @Mock
     private FineractProperties fineractProperties;
+
+    private SqlRowSet rowSet;
 
     @InjectMocks
     private ReadReportingServiceImpl underTest;
@@ -75,7 +80,7 @@ class ReadReportingServiceImplTest {
     void setUp() {
         lenient().when(sqlInjectionPreventerService.quoteIdentifier(anyString())).thenAnswer(i -> "\"" + i.getArgument(0) + "\"");
         lenient().when(genericDataService.wrapSQL(anyString())).thenAnswer(i -> i.getArgument(0));
-        SqlRowSet rowSet = mock(SqlRowSet.class);
+        rowSet = mock(SqlRowSet.class);
         lenient().when(rowSet.next()).thenReturn(true);
         lenient().when(rowSet.getString("the_sql")).thenReturn(REPORT_SQL);
         lenient().when(jdbcTemplate.queryForRowSet(anyString(), eq(REPORT_NAME))).thenReturn(rowSet);
@@ -129,5 +134,39 @@ class ReadReportingServiceImplTest {
         assertThatThrownBy(() -> underTest.retrieveGenericResultset(REPORT_NAME, "report", params, false))
                 .isInstanceOf(SqlValidationException.class).hasMessageContaining("reserved");
         verify(genericDataService, never()).fillGenericResultSet(anyString());
+    }
+
+    @Test
+    void customPlaceholderNamedLikeDateFunctionIsResolvedFromParameter() {
+        when(rowSet.getString("the_sql")).thenReturn("select CAST(${current_date} AS DATE) as as_of, CURRENT_DATE as today");
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        when(genericDataService.fillGenericResultSet(sqlCaptor.capture())).thenReturn(mock(GenericResultsetData.class));
+
+        underTest.retrieveGenericResultset(REPORT_NAME, "report", Map.of("${current_date}", "'2026-11-21'"), false);
+
+        assertThat(sqlCaptor.getValue()).isEqualTo("select CAST('2026-11-21' AS DATE) as as_of, DATE '2023-12-31' as today");
+    }
+
+    @Test
+    void hyphenatedReportParameterIsResolved() {
+        when(rowSet.getString("the_sql")).thenReturn("select o.id from m_office o where o.id = ${office-id}");
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        when(genericDataService.fillGenericResultSet(sqlCaptor.capture())).thenReturn(mock(GenericResultsetData.class));
+
+        underTest.retrieveGenericResultset(REPORT_NAME, "report", Map.of("${office-id}", "1"), false);
+
+        assertThat(sqlCaptor.getValue()).isEqualTo("select o.id from m_office o where o.id = 1");
+    }
+
+    @Test
+    void escapedApostropheIsHonouredOnMySql() {
+        when(databaseTypeResolver.isMySQL()).thenReturn(true);
+        when(rowSet.getString("the_sql")).thenReturn("select 'Today\\'s cutoff' as label, '${endDate}' as cutoff");
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        when(genericDataService.fillGenericResultSet(sqlCaptor.capture())).thenReturn(mock(GenericResultsetData.class));
+
+        underTest.retrieveGenericResultset(REPORT_NAME, "report", Map.of("${endDate}", "2026-11-21"), false);
+
+        assertThat(sqlCaptor.getValue()).isEqualTo("select 'Today\\'s cutoff' as label, '2026-11-21' as cutoff");
     }
 }
