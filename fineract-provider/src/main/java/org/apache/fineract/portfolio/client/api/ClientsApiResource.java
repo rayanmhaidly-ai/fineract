@@ -75,8 +75,10 @@ import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
 import org.apache.fineract.portfolio.client.service.ClientTemplateReadPlatformService;
 import org.apache.fineract.portfolio.loanaccount.guarantor.data.ObligeeData;
 import org.apache.fineract.portfolio.loanaccount.guarantor.service.GuarantorReadPlatformService;
+import org.apache.fineract.portfolio.savings.SavingsApiConstants;
 import org.apache.fineract.portfolio.savings.data.SavingsAccountData;
 import org.apache.fineract.portfolio.savings.service.SavingsAccountReadPlatformService;
+import org.apache.fineract.useradministration.domain.AppUser;
 import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 import org.springframework.stereotype.Component;
@@ -87,6 +89,8 @@ import org.springframework.stereotype.Component;
         + "Clients can be created in Pending or straight into Active state.")
 @RequiredArgsConstructor
 public class ClientsApiResource {
+
+    private static final String LOAN_RESOURCE_NAME = "LOAN";
 
     private final PlatformSecurityContext context;
     private final ClientReadPlatformService clientReadPlatformService;
@@ -611,7 +615,10 @@ public class ClientsApiResource {
     }
 
     private String retrieveClientFinancialSnapshot(Long clientId, final String externalId, final UriInfo uriInfo) {
-        context.authenticatedUser().validateHasReadPermission(ClientApiConstants.CLIENT_RESOURCE_NAME);
+        final AppUser user = context.authenticatedUser();
+        user.validateHasReadPermission(ClientApiConstants.CLIENT_RESOURCE_NAME);
+        user.validateHasReadPermission(LOAN_RESOURCE_NAME);
+        user.validateHasReadPermission(SavingsApiConstants.SAVINGS_ACCOUNT_RESOURCE_NAME);
         ExternalId clientExternalId = ExternalIdFactory.produce(externalId);
         clientId = getResolvedClientId(clientId, clientExternalId);
 
