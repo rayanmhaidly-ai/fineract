@@ -24,16 +24,19 @@ import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
 public class SelfServiceUserAuthorizationManager implements AuthorizationManager<RequestAuthorizationContext> {
+
+    private static final RequestMatcher SELF_SERVICE_REQUEST_MATCHER = AntPathRequestMatcher.antMatcher("/api/*/self/**");
 
     @Override
     public AuthorizationDecision check(Supplier<Authentication> authentication, RequestAuthorizationContext fi) {
         if (!"OPTIONS".equalsIgnoreCase(fi.getRequest().getMethod())) {
             AppUser user = (AppUser) authentication.get().getPrincipal();
 
-            String pathURL = fi.getRequest().getRequestURL().toString();
-            boolean isSelfServiceRequest = pathURL.contains("/self/");
+            boolean isSelfServiceRequest = SELF_SERVICE_REQUEST_MATCHER.matches(fi.getRequest());
 
             boolean notAllowed = ((isSelfServiceRequest && !user.isSelfServiceUser())
                     || (!isSelfServiceRequest && user.isSelfServiceUser()));
