@@ -18,6 +18,8 @@
  */
 package org.apache.fineract.portfolio.client.api;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -615,8 +617,15 @@ public class ClientsApiResource {
 
         final ClientFinancialSnapshotData snapshot = clientFinancialSnapshotReadPlatformService.retrieveClientFinancialSnapshot(clientId);
 
+        final String json = clientFinancialSnapshotToApiJsonSerializer.serialize(snapshot);
         final ApiRequestJsonSerializationSettings settings = apiRequestParameterHelper.process(uriInfo.getQueryParameters());
-        return clientFinancialSnapshotToApiJsonSerializer.serialize(settings, snapshot);
+        if (!settings.isPartialResponseRequired()) {
+            return json;
+        }
+        // fields selects top-level sections only; the nested content of a selected section is kept whole
+        final JsonObject partial = JsonParser.parseString(json).getAsJsonObject();
+        partial.keySet().retainAll(settings.getParametersForPartialResponse());
+        return partial.toString();
     }
 
     private String applyCommandOverClient(Long clientId, final String externalId, final String command, final String jsonPayload) {
