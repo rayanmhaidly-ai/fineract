@@ -64,7 +64,9 @@ import org.apache.fineract.infrastructure.core.service.SearchParameters;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
 import org.apache.fineract.infrastructure.security.service.SqlValidator;
 import org.apache.fineract.portfolio.accountdetails.data.AccountSummaryCollectionData;
+import org.apache.fineract.portfolio.accountdetails.data.ClientFinancialSnapshotData;
 import org.apache.fineract.portfolio.accountdetails.service.AccountDetailsReadPlatformService;
+import org.apache.fineract.portfolio.accountdetails.service.ClientFinancialSnapshotReadPlatformService;
 import org.apache.fineract.portfolio.client.data.ClientData;
 import org.apache.fineract.portfolio.client.exception.ClientNotFoundException;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
@@ -97,6 +99,8 @@ public class ClientsApiResource {
     private final BulkImportWorkbookPopulatorService bulkImportWorkbookPopulatorService;
     private final GuarantorReadPlatformService guarantorReadPlatformService;
     private final SqlValidator sqlValidator;
+    private final ClientFinancialSnapshotReadPlatformService clientFinancialSnapshotReadPlatformService;
+    private final ToApiJsonSerializer<ClientFinancialSnapshotData> clientFinancialSnapshotToApiJsonSerializer;
 
     @GET
     @Path("template")
@@ -281,6 +285,20 @@ public class ClientsApiResource {
     }
 
     @GET
+    @Path("{clientId}/snapshot")
+    @Consumes({ MediaType.APPLICATION_JSON })
+    @Produces({ MediaType.APPLICATION_JSON })
+    @Operation(summary = "Retrieve client financial snapshot", description = "Snapshot of the client's financial position in one call, intended for the home screen of a mobile app: total balance of active savings accounts per currency, active loans with outstanding and overdue amounts, whether anything is overdue, and the next installment due (on or after the business date) across all active loans.\n\n"
+            + "Example Requests:\n" + "\n" + "clients/1/snapshot")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = ClientFinancialSnapshotData.class))),
+            @ApiResponse(responseCode = "404", description = "Client not found") })
+    public String retrieveFinancialSnapshot(@PathParam("clientId") @Parameter(description = "clientId") final Long clientId,
+            @Context final UriInfo uriInfo) {
+        return retrieveClientFinancialSnapshot(clientId, null, uriInfo);
+    }
+
+    @GET
     @Path("downloadtemplate")
     @Produces("application/vnd.ms-excel")
     public Response getClientTemplate(@QueryParam("legalFormType") final String legalFormType, @QueryParam("officeId") final Long officeId,
@@ -348,6 +366,20 @@ public class ClientsApiResource {
     public String retrieveAssociatedAccounts(@PathParam("externalId") @Parameter(description = "externalId") final String externalId,
             @Context final UriInfo uriInfo) {
         return retrieveClientAccounts(null, externalId, uriInfo);
+    }
+
+    @GET
+    @Path("/external-id/{externalId}/snapshot")
+    @Consumes({ MediaType.APPLICATION_JSON })
+    @Produces({ MediaType.APPLICATION_JSON })
+    @Operation(summary = "Retrieve client financial snapshot using the External Id", description = "Snapshot of the client's financial position in one call, intended for the home screen of a mobile app: total balance of active savings accounts per currency, active loans with outstanding and overdue amounts, whether anything is overdue, and the next installment due (on or after the business date) across all active loans.\n\n"
+            + "Example Requests:\n" + "\n" + "clients/external-id/123-456/snapshot")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = ClientFinancialSnapshotData.class))),
+            @ApiResponse(responseCode = "404", description = "Client not found") })
+    public String retrieveFinancialSnapshotByExternalId(
+            @PathParam("externalId") @Parameter(description = "externalId") final String externalId, @Context final UriInfo uriInfo) {
+        return retrieveClientFinancialSnapshot(null, externalId, uriInfo);
     }
 
     @PUT
@@ -574,6 +606,17 @@ public class ClientsApiResource {
         final ApiRequestJsonSerializationSettings settings = apiRequestParameterHelper.process(uriInfo.getQueryParameters());
         return clientAccountSummaryToApiJsonSerializer.serialize(settings, clientAccount,
                 ClientApiConstants.CLIENT_ACCOUNTS_DATA_PARAMETERS);
+    }
+
+    private String retrieveClientFinancialSnapshot(Long clientId, final String externalId, final UriInfo uriInfo) {
+        context.authenticatedUser().validateHasReadPermission(ClientApiConstants.CLIENT_RESOURCE_NAME);
+        ExternalId clientExternalId = ExternalIdFactory.produce(externalId);
+        clientId = getResolvedClientId(clientId, clientExternalId);
+
+        final ClientFinancialSnapshotData snapshot = clientFinancialSnapshotReadPlatformService.retrieveClientFinancialSnapshot(clientId);
+
+        final ApiRequestJsonSerializationSettings settings = apiRequestParameterHelper.process(uriInfo.getQueryParameters());
+        return clientFinancialSnapshotToApiJsonSerializer.serialize(settings, snapshot);
     }
 
     private String applyCommandOverClient(Long clientId, final String externalId, final String command, final String jsonPayload) {
