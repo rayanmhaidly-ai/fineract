@@ -46,6 +46,7 @@ import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
 import org.apache.fineract.infrastructure.core.data.UploadRequest;
 import org.apache.fineract.infrastructure.documentmanagement.api.ImagesApiResource;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
+import org.apache.fineract.portfolio.accountdetails.data.ClientFinancialSnapshotData;
 import org.apache.fineract.portfolio.client.api.ClientApiConstants;
 import org.apache.fineract.portfolio.client.api.ClientChargesApiResource;
 import org.apache.fineract.portfolio.client.api.ClientTransactionsApiResource;
@@ -137,6 +138,23 @@ public class SelfClientsApiResource {
         validateAppuserClientsMapping(clientId);
 
         return this.clientApiResource.retrieveAssociatedAccounts(clientId, uriInfo);
+    }
+
+    @GET
+    @Path("{clientId}/snapshot")
+    @Consumes({ MediaType.APPLICATION_JSON })
+    @Produces({ MediaType.APPLICATION_JSON })
+    @Operation(summary = "Retrieve client financial snapshot", description = "Snapshot of the self service user's financial position in one call, for the mobile app home screen: total balance of active savings accounts per currency, active loans with outstanding and overdue amounts, whether anything is overdue, and the next installment due.\n\n"
+            + "Example Requests:\n" + "\n" + "self/clients/1/snapshot")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = ClientFinancialSnapshotData.class))),
+            @ApiResponse(responseCode = "404", description = "Client not found") })
+    public String retrieveFinancialSnapshot(@PathParam("clientId") @Parameter(description = "clientId") final Long clientId,
+            @Context final UriInfo uriInfo) {
+
+        validateAppuserClientsMapping(clientId);
+
+        return this.clientApiResource.retrieveFinancialSnapshot(clientId, uriInfo);
     }
 
     @GET
