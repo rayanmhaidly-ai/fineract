@@ -21,13 +21,19 @@ package org.apache.fineract.portfolio.search.service;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.fineract.infrastructure.core.data.ApiParameterError;
+import org.apache.fineract.infrastructure.core.data.DataValidatorBuilder;
 import org.apache.fineract.infrastructure.core.data.EnumOptionData;
 import org.apache.fineract.infrastructure.core.domain.JdbcSupport;
+import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
 import org.apache.fineract.infrastructure.core.service.database.DatabaseSpecificSQLGenerator;
+import org.apache.fineract.infrastructure.core.service.database.SqlOperator;
 import org.apache.fineract.infrastructure.security.service.PlatformSecurityContext;
 import org.apache.fineract.organisation.monetary.domain.MoneyHelper;
 import org.apache.fineract.organisation.office.data.OfficeData;
@@ -41,6 +47,7 @@ import org.apache.fineract.portfolio.loanproduct.service.LoanProductReadPlatform
 import org.apache.fineract.portfolio.savings.service.SavingsEnumerations;
 import org.apache.fineract.portfolio.search.SearchConstants;
 import org.apache.fineract.portfolio.search.data.AdHocQuerySearchConditions;
+import org.apache.fineract.portfolio.search.data.AdHocQuerySearchConstants;
 import org.apache.fineract.portfolio.search.data.AdHocSearchQueryData;
 import org.apache.fineract.portfolio.search.data.SearchConditions;
 import org.apache.fineract.portfolio.search.data.SearchData;
@@ -207,6 +214,13 @@ public class SearchReadPlatformServiceImpl implements SearchReadPlatformService 
 
     private static final class AdHocQuerySearchMapper implements RowMapper<AdHocSearchQueryData> {
 
+        private static final String BETWEEN_CONDITION = "between";
+        private static final Map<String, SqlOperator> SUPPORTED_COMPARISON_OPERATORS = Map.of(SqlOperator.EQ.getSymbol(), SqlOperator.EQ,
+                SqlOperator.LT.getSymbol(), SqlOperator.LT, SqlOperator.LTE.getSymbol(), SqlOperator.LTE, SqlOperator.GT.getSymbol(),
+                SqlOperator.GT, SqlOperator.GTE.getSymbol(), SqlOperator.GTE);
+        private static final Object[] SUPPORTED_CONDITIONS = { BETWEEN_CONDITION, SqlOperator.EQ.getSymbol(), SqlOperator.LT.getSymbol(),
+                SqlOperator.LTE.getSymbol(), SqlOperator.GT.getSymbol(), SqlOperator.GTE.getSymbol() };
+
         private boolean isWhereClauseAdded = false;
 
         // TODO- build the query dynamically based on selected entity types, for
@@ -269,7 +283,8 @@ public class SearchReadPlatformServiceImpl implements SearchReadPlatformService 
             isWhereClauseAdded = false;
 
             if (searchConditions.getIncludeOutStandingAmountPercentage()) {
-                if (searchConditions.getOutStandingAmountPercentageCondition().equals("between")) {
+                final String condition = searchConditions.getOutStandingAmountPercentageCondition();
+                if (BETWEEN_CONDITION.equals(condition)) {
                     checkAndUpdateWhereClause(sql);
                     params.addValue("minOutStandingAmountPercentage", searchConditions.getMinOutStandingAmountPercentage());
                     params.addValue("maxOutStandingAmountPercentage", searchConditions.getMaxOutStandingAmountPercentage());
@@ -277,13 +292,15 @@ public class SearchReadPlatformServiceImpl implements SearchReadPlatformService 
                 } else {
                     checkAndUpdateWhereClause(sql);
                     params.addValue("outStandingAmountPercentage", searchConditions.getOutStandingAmountPercentage());
-                    sql.append(" a.percentOut ").append(searchConditions.getOutStandingAmountPercentageCondition())
+                    sql.append(" a.percentOut ").append(
+                            resolveComparisonOperator(AdHocQuerySearchConstants.outStandingAmountPercentageConditionParamName, condition))
                             .append(" :outStandingAmountPercentage ");
                 }
             }
 
             if (searchConditions.getIncludeOutstandingAmount()) {
-                if (searchConditions.getOutstandingAmountCondition().equals("between")) {
+                final String condition = searchConditions.getOutstandingAmountCondition();
+                if (BETWEEN_CONDITION.equals(condition)) {
                     checkAndUpdateWhereClause(sql);
                     params.addValue("minOutstandingAmount", searchConditions.getMinOutstandingAmount());
                     params.addValue("maxOutstandingAmount", searchConditions.getMaxOutstandingAmount());
@@ -291,12 +308,24 @@ public class SearchReadPlatformServiceImpl implements SearchReadPlatformService 
                 } else {
                     checkAndUpdateWhereClause(sql);
                     params.addValue("outstandingAmount", searchConditions.getOutstandingAmount());
-                    sql.append(" a.outstandingAmt ").append(searchConditions.getOutstandingAmountCondition())
+                    sql.append(" a.outstandingAmt ")
+                            .append(resolveComparisonOperator(AdHocQuerySearchConstants.outstandingAmountConditionParamName, condition))
                             .append(" :outstandingAmount ");
                 }
             }
 
             return sql.toString();
+        }
+
+        private static String resolveComparisonOperator(final String parameterName, final String condition) {
+            final SqlOperator operator = condition == null ? null : SUPPORTED_COMPARISON_OPERATORS.get(condition);
+            if (operator == null) {
+                final List<ApiParameterError> dataValidationErrors = new ArrayList<>();
+                new DataValidatorBuilder(dataValidationErrors).resource(AdHocQuerySearchConstants.AD_HOC_SEARCH_QUERY_RESOURCE_NAME)
+                        .parameter(parameterName).value(condition).isOneOfTheseValues(SUPPORTED_CONDITIONS);
+                throw new PlatformApiDataValidationException(dataValidationErrors);
+            }
+            return operator.getSymbol();
         }
 
         private void checkAndUpdateWhereClause(final StringBuilder sql) {
