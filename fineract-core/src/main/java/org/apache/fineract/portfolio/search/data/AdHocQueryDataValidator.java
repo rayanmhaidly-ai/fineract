@@ -140,8 +140,8 @@ public class AdHocQueryDataValidator {
             final String outStandingAmountPercentageCondition = this.fromApiJsonHelper
                     .extractStringNamed(AdHocQuerySearchConstants.outStandingAmountPercentageConditionParamName, element);
             baseDataValidator.reset().parameter(AdHocQuerySearchConstants.outStandingAmountPercentageConditionParamName)
-                    .value(outStandingAmountPercentageCondition).isNotOneOfTheseValues(AD_HOC_SEARCH_QUERY_CONDITIONS);
-            if (outStandingAmountPercentageCondition.equals("between")) {
+                    .value(outStandingAmountPercentageCondition).isOneOfTheseValues(AD_HOC_SEARCH_QUERY_CONDITIONS.toArray());
+            if ("between".equals(outStandingAmountPercentageCondition)) {
                 final BigDecimal minOutStandingAmountPercentage = this.fromApiJsonHelper
                         .extractBigDecimalWithLocaleNamed(AdHocQuerySearchConstants.minOutStandingAmountPercentageParamName, element);
                 baseDataValidator.reset().parameter(AdHocQuerySearchConstants.minOutStandingAmountPercentageParamName)
@@ -173,8 +173,8 @@ public class AdHocQueryDataValidator {
             final String outstandingAmountCondition = this.fromApiJsonHelper
                     .extractStringNamed(AdHocQuerySearchConstants.outstandingAmountConditionParamName, element);
             baseDataValidator.reset().parameter(AdHocQuerySearchConstants.outstandingAmountConditionParamName)
-                    .value(outstandingAmountCondition).isNotOneOfTheseValues(AD_HOC_SEARCH_QUERY_CONDITIONS);
-            if (outstandingAmountCondition.equals("between")) {
+                    .value(outstandingAmountCondition).isOneOfTheseValues(AD_HOC_SEARCH_QUERY_CONDITIONS.toArray());
+            if ("between".equals(outstandingAmountCondition)) {
                 final BigDecimal minOutstandingAmount = this.fromApiJsonHelper
                         .extractBigDecimalWithLocaleNamed(AdHocQuerySearchConstants.minOutstandingAmountParamName, element);
                 baseDataValidator.reset().parameter(AdHocQuerySearchConstants.minOutstandingAmountParamName).value(minOutstandingAmount)
